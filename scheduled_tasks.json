@@ -1,7 +1,1 @@
-{
-    "task_1": {
-        "interval": 1,
-        "input_file": "test.txt",
-        "output_file": "convert.txt"
-    }
-}
+{}
