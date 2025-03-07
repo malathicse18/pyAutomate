@@ -1,5 +1,3 @@
-
-
 import argparse
 import json
 import logging
@@ -9,6 +7,9 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from pymongo import MongoClient
+from docx import Document
+import pandas as pd
+from fpdf import FPDF
 
 # Configure logging
 logging.basicConfig(
@@ -55,13 +56,36 @@ def save_tasks(tasks):
     with open(TASK_FILE, "w") as f:
         json.dump(tasks, f, indent=4)
 
-def convert_file(task_name, input_path, output_path):
-    """Convert file content to uppercase and save as output format."""
+def convert_file(task_name, input_path, output_path, input_format, output_format):
+    """Convert file content based on the specified formats."""
     try:
-        with open(input_path, "r") as f:
-            content = f.read()
-        with open(output_path, "w") as f:
-            f.write(content.upper())
+        if input_format == "txt" and output_format == "csv":
+            with open(input_path, "r") as f:
+                content = f.read()
+            with open(output_path, "w") as f:
+                f.write(content.upper())
+        elif input_format == "txt" and output_format == "pdf":
+            with open(input_path, "r") as f:
+                content = f.read()
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=12)
+            pdf.multi_cell(0, 10, content)
+            pdf.output(output_path)
+        elif input_format == "csv" and output_format == "xlsx":
+            df = pd.read_csv(input_path)
+            df.to_excel(output_path, index=False)
+        elif input_format == "docx" and output_format == "pdf":
+            doc = Document(input_path)
+            pdf = FPDF()
+            pdf.add_page()
+            for para in doc.paragraphs:
+                pdf.set_font("Arial", size=12)
+                pdf.multi_cell(0, 10, para.text)
+            pdf.output(output_path)
+        else:
+            raise ValueError("Unsupported conversion format")
+        
         logging.info(f"✅ Converted: '{input_path}' -> '{output_path}'")
         log_to_mongodb(task_name, input_path, output_path, "Converted")
     except Exception as e:
@@ -81,24 +105,43 @@ def file_conversion_task(task_name, directory, input_format, output_format):
             input_path = os.path.join(directory, filename)
             output_filename = f"{os.path.splitext(filename)[0]}.{output_format}"
             output_path = os.path.join(directory, output_filename)
-            convert_file(task_name, input_path, output_path)
+            convert_file(task_name, input_path, output_path, input_format, output_format)
             files_converted += 1
     
     if files_converted == 0:
         log_to_mongodb(task_name, directory, None, f"No files with .{input_format} format found")
 
-def add_task(interval, directory, input_format, output_format):
+def add_task(interval, unit, directory, input_format, output_format):
     """Schedule a new file conversion task."""
     scheduled_tasks = load_tasks()
-    task_name = f"task_{interval}_{input_format}_{output_format}"
+    task_name = f"task_{interval}_{unit}_{input_format}_{output_format}"
 
     if task_name in scheduled_tasks:
         print(f"⚠️ Task '{task_name}' is already scheduled.")
         return
 
+    # Check if there are any files with the input format in the directory
+    files_found = any(filename.endswith(f".{input_format}") for filename in os.listdir(directory))
+    if not files_found:
+        log_to_mongodb(task_name, directory, None, f"No files with .{input_format} format found", level="ERROR")
+        print(f"⚠️ No files with .{input_format} format found in the directory '{directory}'. Task not scheduled.")
+        return
+
+    if unit == "seconds":
+        trigger = IntervalTrigger(seconds=interval)
+    elif unit == "minutes":
+        trigger = IntervalTrigger(minutes=interval)
+    elif unit == "hours":
+        trigger = IntervalTrigger(hours=interval)
+    elif unit == "days":
+        trigger = IntervalTrigger(days=interval)
+    else:
+        print(f"⚠️ Unsupported time unit '{unit}'. Task not scheduled.")
+        return
+
     scheduler.add_job(
         file_conversion_task,
-        IntervalTrigger(seconds=interval),
+        trigger,
         args=[task_name, directory, input_format, output_format],
         id=task_name,
         replace_existing=True
@@ -106,13 +149,14 @@ def add_task(interval, directory, input_format, output_format):
     
     scheduled_tasks[task_name] = {
         "interval": interval,
+        "unit": unit,
         "directory": directory,
         "input_format": input_format,
         "output_format": output_format
     }
     save_tasks(scheduled_tasks)
-    log_to_mongodb(task_name, directory, None, f"Task scheduled every {interval} seconds")
-    print(f"✅ Task '{task_name}' scheduled every {interval} seconds.")
+    log_to_mongodb(task_name, directory, None, f"Task scheduled every {interval} {unit}")
+    print(f"✅ Task '{task_name}' scheduled every {interval} {unit}.")
 
 def remove_task(task_name):
     """Remove a scheduled task."""
@@ -135,19 +179,31 @@ def list_tasks():
         print("📌 Scheduled tasks:")
         for task_name, details in scheduled_tasks.items():
             directory = details.get("directory", "N/A")
-            print(f" - {task_name}: Every {details['interval']}s | Dir: {directory} | Input: .{details['input_format']} | Output: .{details['output_format']}")
+            print(f" - {task_name}: Every {details['interval']} {details['unit']} | Dir: {directory} | Input: .{details['input_format']} | Output: .{details['output_format']}")
 
 def load_and_schedule_tasks():
     """Load tasks from storage and schedule them."""
     scheduled_tasks = load_tasks()
     for task_name, details in scheduled_tasks.items():
-        if not all(k in details for k in ["interval", "directory", "input_format", "output_format"]):
+        if not all(k in details for k in ["interval", "unit", "directory", "input_format", "output_format"]):
             print(f"⚠️ Skipping task '{task_name}': Missing required fields.")
+            continue
+
+        if details["unit"] == "seconds":
+            trigger = IntervalTrigger(seconds=details["interval"])
+        elif details["unit"] == "minutes":
+            trigger = IntervalTrigger(minutes=details["interval"])
+        elif details["unit"] == "hours":
+            trigger = IntervalTrigger(hours=details["interval"])
+        elif details["unit"] == "days":
+            trigger = IntervalTrigger(days=details["interval"])
+        else:
+            print(f"⚠️ Unsupported time unit '{details['unit']}'. Task not scheduled.")
             continue
 
         scheduler.add_job(
             file_conversion_task,
-            IntervalTrigger(seconds=details["interval"]),
+            trigger,
             args=[
                 task_name,
                 details.get("directory", "N/A"),
@@ -170,10 +226,11 @@ def start_scheduler():
 
 # CLI Argument Parsing
 parser = argparse.ArgumentParser(description="Background File Conversion Scheduler")
-parser.add_argument("--add", type=int, help="Add a new task with interval (in seconds)")
+parser.add_argument("--add", type=int, help="Add a new task with interval")
+parser.add_argument("--unit", type=str, choices=["seconds", "minutes", "hours", "days"], help="Time unit for the interval")
 parser.add_argument("--dir", type=str, help="Directory to scan for files")
-parser.add_argument("--input-format", type=str, help="Input file format (e.g., txt)")
-parser.add_argument("--output-format", type=str, help="Output file format (e.g., csv)")
+parser.add_argument("--input-format", type=str, help="Input file format (e.g., txt, csv, docx)")
+parser.add_argument("--output-format", type=str, help="Output file format (e.g., csv, xlsx, pdf)")
 parser.add_argument("--list", action="store_true", help="List all scheduled tasks")
 parser.add_argument("--remove", type=str, help="Remove a scheduled task by name")
 
@@ -183,10 +240,10 @@ args = parser.parse_args()
 load_and_schedule_tasks()
 
 if args.add:
-    if not args.dir or not args.input_format or not args.output_format:
-        print("⚠️ Please provide --dir, --input-format, and --output-format.")
+    if not args.unit or not args.dir or not args.input_format or not args.output_format:
+        print("⚠️ Please provide --unit, --dir, --input-format, and --output-format.")
         exit(1)
-    add_task(args.add, args.dir, args.input_format, args.output_format)
+    add_task(args.add, args.unit, args.dir, args.input_format, args.output_format)
     exit(0)
 
 elif args.list:
