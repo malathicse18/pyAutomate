@@ -1,12 +1,11 @@
+
+
 import argparse
 import json
 import logging
 import os
 import time
 import threading
-import csv
-import signal
-from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from pymongo import MongoClient
@@ -118,7 +117,7 @@ def add_task(interval, directory, input_format, output_format):
 def remove_task(task_name):
     """Remove a scheduled task."""
     scheduled_tasks = load_tasks()
-    if (task_name in scheduled_tasks):
+    if task_name in scheduled_tasks:
         scheduler.remove_job(task_name)
         del scheduled_tasks[task_name]
         save_tasks(scheduled_tasks)
@@ -159,25 +158,6 @@ def load_and_schedule_tasks():
             replace_existing=True
         )
 
-def log_process_id(status="Running"):
-    """Log the current process ID to processid.csv."""
-    process_id = os.getpid()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    with open("processid.csv", mode="a", newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow([timestamp, process_id, status])
-
-def handle_termination_signal(signum, frame):
-    """Handle termination signal and update the process status to 'Killed'."""
-    log_process_id(status="Killed")
-    print("🛑 Process killed.")
-    exit(0)
-
-# Register signal handlers for termination signals
-signal.signal(signal.SIGTERM, handle_termination_signal)
-signal.signal(signal.SIGINT, handle_termination_signal)
-
 def start_scheduler():
     """Runs the scheduler in a separate thread."""
     scheduler.start()
@@ -198,9 +178,6 @@ parser.add_argument("--list", action="store_true", help="List all scheduled task
 parser.add_argument("--remove", type=str, help="Remove a scheduled task by name")
 
 args = parser.parse_args()
-
-# Log the process ID when the script starts
-log_process_id()
 
 # Load and schedule tasks before parsing commands
 load_and_schedule_tasks()
@@ -231,3 +208,4 @@ try:
 except KeyboardInterrupt:
     print("🛑 Scheduler stopped.")
     scheduler.shutdown()
+
