@@ -4,8 +4,12 @@ import logging
 import os
 import time
 import threading
+import csv
+import signal
+from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from pymongo import MongoClient
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +23,24 @@ TASK_FILE = "scheduled_tasks.json"
 
 # Initialize Scheduler
 scheduler = BackgroundScheduler()
+
+# MongoDB Configuration
+MONGO_URI = "mongodb://localhost:27017/"
+client = MongoClient(MONGO_URI)
+db = client["file_conversion"]
+logs_collection = db["logs"]
+
+def log_to_mongodb(task_name, input_path, output_path, status, level="INFO"):
+    """Log messages to MongoDB."""
+    log_entry = {
+        "task_name": task_name,
+        "input": input_path,
+        "output": output_path,
+        "status": status,
+        "level": level,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    logs_collection.insert_one(log_entry)
 
 def load_tasks():
     """Load scheduled tasks from file."""
@@ -34,7 +56,7 @@ def save_tasks(tasks):
     with open(TASK_FILE, "w") as f:
         json.dump(tasks, f, indent=4)
 
-def convert_file(input_path, output_path):
+def convert_file(task_name, input_path, output_path):
     """Convert file content to uppercase and save as output format."""
     try:
         with open(input_path, "r") as f:
@@ -42,16 +64,16 @@ def convert_file(input_path, output_path):
         with open(output_path, "w") as f:
             f.write(content.upper())
         logging.info(f"✅ Converted: '{input_path}' -> '{output_path}'")
-        # print(f"✅ Converted: '{input_path}' -> '{output_path}'")
+        log_to_mongodb(task_name, input_path, output_path, "Converted")
     except Exception as e:
         logging.error(f"❌ Error converting '{input_path}': {e}")
-        print(f"❌ Error converting '{input_path}': {e}")
+        log_to_mongodb(task_name, input_path, output_path, f"Error: {e}", level="ERROR")
 
 def file_conversion_task(task_name, directory, input_format, output_format):
     """Perform file conversion for all matching files in a directory."""
     if not os.path.exists(directory) or not os.path.isdir(directory):
         logging.error(f"Task '{task_name}' failed: Directory '{directory}' not found.")
-        print(f"❌ Task '{task_name}' failed: Directory '{directory}' not found.")
+        log_to_mongodb(task_name, directory, None, "Directory not found", level="ERROR")
         return
 
     files_converted = 0
@@ -60,11 +82,11 @@ def file_conversion_task(task_name, directory, input_format, output_format):
             input_path = os.path.join(directory, filename)
             output_filename = f"{os.path.splitext(filename)[0]}.{output_format}"
             output_path = os.path.join(directory, output_filename)
-            convert_file(input_path, output_path)
+            convert_file(task_name, input_path, output_path)
             files_converted += 1
     
     if files_converted == 0:
-        print(f"📌 No files with .{input_format} format found in '{directory}'.")
+        log_to_mongodb(task_name, directory, None, f"No files with .{input_format} format found")
 
 def add_task(interval, directory, input_format, output_format):
     """Schedule a new file conversion task."""
@@ -90,15 +112,17 @@ def add_task(interval, directory, input_format, output_format):
         "output_format": output_format
     }
     save_tasks(scheduled_tasks)
+    log_to_mongodb(task_name, directory, None, f"Task scheduled every {interval} seconds")
     print(f"✅ Task '{task_name}' scheduled every {interval} seconds.")
 
 def remove_task(task_name):
     """Remove a scheduled task."""
     scheduled_tasks = load_tasks()
-    if task_name in scheduled_tasks:
+    if (task_name in scheduled_tasks):
         scheduler.remove_job(task_name)
         del scheduled_tasks[task_name]
         save_tasks(scheduled_tasks)
+        log_to_mongodb(task_name, None, None, "Task removed")
         print(f"✅ Task '{task_name}' removed.")
     else:
         print(f"⚠️ No task found with name '{task_name}'.")
@@ -135,6 +159,25 @@ def load_and_schedule_tasks():
             replace_existing=True
         )
 
+def log_process_id(status="Running"):
+    """Log the current process ID to processid.csv."""
+    process_id = os.getpid()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with open("processid.csv", mode="a", newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([timestamp, process_id, status])
+
+def handle_termination_signal(signum, frame):
+    """Handle termination signal and update the process status to 'Killed'."""
+    log_process_id(status="Killed")
+    print("🛑 Process killed.")
+    exit(0)
+
+# Register signal handlers for termination signals
+signal.signal(signal.SIGTERM, handle_termination_signal)
+signal.signal(signal.SIGINT, handle_termination_signal)
+
 def start_scheduler():
     """Runs the scheduler in a separate thread."""
     scheduler.start()
@@ -155,6 +198,9 @@ parser.add_argument("--list", action="store_true", help="List all scheduled task
 parser.add_argument("--remove", type=str, help="Remove a scheduled task by name")
 
 args = parser.parse_args()
+
+# Log the process ID when the script starts
+log_process_id()
 
 # Load and schedule tasks before parsing commands
 load_and_schedule_tasks()
