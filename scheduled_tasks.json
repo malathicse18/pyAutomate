@@ -1,8 +1,11 @@
 {
-    "task_2_txt_csv": {
-        "interval": 2,
+    "task_1_minutes_conversion_txt_pdf": {
+        "interval": 1,
+        "unit": "minutes",
         "directory": "C:\\Users\\malatk\\OneDrive - Capgemini\\Pictures\\Automate\\input_files",
+        "task_type": "conversion",
         "input_format": "txt",
-        "output_format": "csv"
+        "output_format": "pdf",
+        "compression_format": null
     }
 }
