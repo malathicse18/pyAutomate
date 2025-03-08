@@ -1,0 +1,4 @@
+Flask
+pymongo
+apscheduler
+python-dotenv

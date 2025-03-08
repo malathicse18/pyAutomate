@@ -1,0 +1,9 @@
+{
+    "task_1_minutes_compression_zip": {
+        "interval": 1,
+        "unit": "minutes",
+        "directory": "C:/Users/malatk/OneDrive - Capgemini/Documents",
+        "task_type": "compression",
+        "compression_format": "zip"
+    }
+}
