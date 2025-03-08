@@ -1,11 +1,11 @@
 {
-    "task_1_minutes_conversion_txt_pdf": {
+    "task_1_minutes_organization_organization": {
         "interval": 1,
         "unit": "minutes",
-        "directory": "C:\\Users\\malatk\\OneDrive - Capgemini\\Pictures\\Automate\\input_files",
-        "task_type": "conversion",
-        "input_format": "txt",
-        "output_format": "pdf",
+        "directory": "C:\\Users\\malatk\\OneDrive - Capgemini\\Documents",
+        "task_type": "organization",
+        "input_format": null,
+        "output_format": null,
         "compression_format": null
     }
 }
